@@ -1,10 +1,10 @@
 # shiny app to explore PADRINO interactively
 
+
+library(RPadrino)
 library(shinydashboard)
 library(rlang)
-library(tools)
 library(dplyr)
-library(RPadrino)
 library(sf)
 library(leaflet)
 
@@ -135,11 +135,18 @@ server <- function(input, output) {
       group_by(!!! gr_by) %>%
       summarise(id = length(unique(ipm_id)),
                 spp = length(unique(species_accepted)),
-                pubs = length(unique(apa_citation))) %>%
-      setNames(c(names(.)[1:(length(names(.)) - 3)],
-                 "# of ipm_id's",
-                 "# of Species",
-                 "# of Publications"))
+                pubs = length(unique(apa_citation)))
+
+    if(length(gr_by) == 0 ){
+      out_tab <- setNames(out_tab,
+                          c("# of ipm_id's",
+                            "# of Species",
+                            "# of Publications"))
+    } else {
+      names(out_tab)[(length(gr_by) + 1):(ncol(out_tab))] <- c("# of ipm_id's",
+                                                               "# of Species",
+                                                               "# of Publications")
+    }
 
     out_tab
   })
