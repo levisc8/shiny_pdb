@@ -1,16 +1,20 @@
 # shiny app to explore PADRINO interactively
 
-
+# Dependencies ---------------
 library(RPadrino)
 library(shinydashboard)
 library(rlang)
 library(dplyr)
 library(sf)
 library(leaflet)
+library(ggplot2)
+library(gridExtra)
 
-
-
+# Download PADRINO upfront so it is not constantly re-downloading itself
 pdb <- pdb_download(save = FALSE)
+
+
+# Helper functions -----------------
 
 pdb_jstor_doi_link <- function(pdb) {
 
@@ -71,26 +75,192 @@ pdb_map_lab_link <- function(pdb) {
 
 }
 
+pdb_make_map_dataset <- function(pdb, ipm_ids) {
+
+  pdb_subset(pdb, ipm_ids) %>%
+    .$Metadata %>%
+    select(ipm_id, species_accepted, doi, lon, lat) %>%
+    mutate(species_acceptcced = gsub("_", " ", .$species_accepted)) %>%
+    filter(!is.na(lat) & !is.na(lon)) %>%
+    st_as_sf(crs = "WGS84",
+             coords = 4:5)
+}
+
+pdb_check_stochastic_models <- function(db, ids) {
+
+  test <- pdb_subset(db, ids)
+
+  if(nrow(test$EnvironmentalVariables) > 0) {
+
+    rm_ids <- unique(test$EnvironmentalVariables$ipm_id)
+
+    ids    <- ids[!ids %in% rm_ids]
+
+    warning("Found stochastic models in requested data set. These will be removed!",
+            call. = FALSE)
+
+  }
+
+  return(ids)
+
+}
+
+pdb_mat_to_df <- function(ps) {
+
+  if(isTRUE(attr(ps, "has_par_sets"))) {
+
+    lapply(ps, function(x){
+
+      x <- lapply(x, pdb_check_correct_ps_range)
+
+      do.call(rbind, x)
+    })
+
+  } else {
+
+    ps <- pdb_check_correct_ps_range(ps)
+
+    list(do.call(rbind, ps))
+  }
+
+}
+
+pdb_prep_ps_par_sets <- function(pop_state, pdb) {
+
+  use_pdb <- pdb_subset(pdb, names(pop_state))
+
+  # No par sets? Then keep on going.
+  if(nrow(use_pdb$ParSetIndices) < 1) return(pop_state)
+
+  par_set_tab <- use_pdb$ParSetIndices
+
+  par_set_ids <- unique(par_set_tab$ipm_id)
+
+  for(i in seq_along(par_set_ids)) {
+
+    ind    <- which(names(pop_state) == par_set_ids[i])
+
+    use_ps          <- pop_state[[ind]]
+    use_par_set_tab <- par_set_tab[par_set_tab$ipm_id == par_set_ids[i], ]
+
+    use_par_sets    <- as.list(use_par_set_tab$range) %>%
+      lapply(function(x) eval(parse(text = x))) %>%
+      setNames(use_par_set_tab$vr_expr_name)
+
+    if(!all(is.na(use_par_set_tab$drop_levels))) {
+      use_par_sets$drop_levels <- unique(eval(use_par_set_tab$drop_levels))
+    }
+
+    # replace the "n_z_parSetIndex" with "ipm_id_z_parSetIndex"
+
+    # names(use_ps)  <- gsub("^n", names(pop_state[ind]), names(use_ps))
+
+    par_set_inds <- ipmr:::.make_par_set_indices(use_par_sets)
+
+    temp <- list()
+    for(j in seq_along(par_set_inds)) {
+
+      temp <- c(temp, list(use_ps[grepl(par_set_inds[j], names(use_ps))]))
+      names(temp)[j] <- paste(par_set_ids[i], par_set_inds[j], sep = "_")
+
+    }
+
+    attr(temp, "has_par_sets") <- TRUE
+    pop_state[[ind]] <- temp
+
+  }
+
+  return(pop_state)
+
+}
+
+pdb_calculate_input_ipm_ids <- function(pdb, input_ids) {
+
+  ipm_ids <- strsplit(input_ids, ",") %>%
+    unlist() %>%
+    trimws()
+
+  # browser()
+
+  if(input_ids == "all") {
+
+    ipm_ids <- unique(pdb$Metadata$ipm_id)
+
+  } else if(!any(ipm_ids %in% pdb$Metadata$ipm_id)) { # Input is species/genus names
+
+    spp_nms <- gsub(" ", "_", ipm_ids)
+
+    use_ids <- character()
+
+    # This approach Won't scale well when PDB gets bigger. Worry about this
+    # later.
+
+    for(i in seq_along(spp_nms)) {
+
+      # use fuzzy matching of full names so users don't have to specify
+      # varieties/sub-species
+      temp <- pdb$Metadata$ipm_id[grepl(spp_nms[i],
+                                        pdb$Metadata$species_accepted)] %>%
+        unique()
+
+      use_ids <- c(use_ids, temp)
+
+    }
+
+    ipm_ids <- use_ids[use_ids != ""] %>%
+      unique()
+
+  }
+
+  return(ipm_ids)
+}
+
+# Re-scales the population state for plotting. This prevents the population
+# time-series heat maps from getting swamped by large numbers in e.g. a seedbank
+# and small transition probalities everywhere else.
+
+pdb_check_correct_ps_range <- function(pop_state) {
+
+  rng <- range(pop_state)
+
+  if(abs(diff(rng)) > 0.1) {
+    if(max(pop_state) < 1) {
+      pow <- 4
+    } else {
+      pow <- 0.1
+    }
+    pop_state <- pop_state ^ (pow)
+  }
+
+  return(pop_state)
+
+}
+
+# UI-------------
 
 ui <- dashboardPage(
   skin = "green",
 
   dashboardHeader(title = "Padrino Database"),
   dashboardSidebar(id = "",
-    menuItem("Home",     tabName = "home",     icon = icon("home")),
-    menuItem("Metadata", tabName = "metadata", icon = icon("book")),
-    menuItem("Maps",     tabName = "map",      icon = icon("map"))
+      menuItem("Home",           tabName = "home",      icon = icon("home"),
+               selected = TRUE),
+      menuItem("Metadata",       tabName = "metadata",  icon = icon("book")),
+      menuItem("Maps",           tabName = "map",       icon = icon("map")),
+      menuItem("Models",                                icon = icon("calculator"),
+               menuSubItem("Tables",        tabName = "mod_tabs"),
+               menuSubItem("Model Figures", tabName = "mod_figs"))
+
   ),
 
   dashboardBody(
     tabItems(
       tabItem(tabName = "home",
-              includeMarkdown("www/home.md")),
+              includeHTML("www/home.html")),
 
 
       tabItem(tabName = "metadata",
               fluidRow(
-                tableOutput("sum_tab"),
                 box(title = "Select Columns to Summarize Metadata by",
 
                     selectizeInput(inputId = "gr_by",
@@ -98,7 +268,8 @@ ui <- dashboardPage(
                                    choices = names(pdb[[1]]),
                                    multiple = TRUE)
 
-                )
+                ),
+                dataTableOutput("sum_tab")
               )
       ), # End Metadata tab
       tabItem(tabName = "map",
@@ -106,18 +277,54 @@ ui <- dashboardPage(
               fluidRow(
                 leafletOutput("map_out"),
                 box(
-                  title = "Enter ipm_id's to Map",
+                  title = "Enter ipm_id's or Genus/Species Names to Map",
                   textInput(
-                    inputId = "ipm_ids",
-                    label   = "IPM ID's",
+                    inputId = "map_ids",
+                    label   = "IPM ID's/Genus/Species Names",
                     value   = "all"),
                   actionButton(
-                    inputId = "submit_ipm_id",
-                    label = "Submit IDs"
+                    inputId = "submit_map_id",
+                    label = "Submit"
                   )
                 )
               )
-      ) # End Map tab
+      ), # End Map tab
+      tabItem(tabName = "mod_tabs",
+              includeMarkdown("www/mods.md"),
+              fluidRow(
+                box(
+                  title = "Enter ipm_id's or Genus/Species Names to Model",
+                  textInput(
+                    inputId = "mod_ids",
+                    label   = "IPM ID's/Genus/Species Names",
+                    value   = ""),
+                  actionButton(
+                    inputId = "submit_mod_id",
+                    label = "Submit"
+                  )
+                ),
+                dataTableOutput("demog_stats")
+              )
+      ),
+      tabItem(tabName = "mod_figs",
+              includeMarkdown("www/mods.md"),
+              fluidRow(
+                box(
+                  title = "Enter ipm_id's or Genus/Species Names to Model",
+                  textInput(
+                    inputId = "fig_ids",
+                    label   = "IPM ID's/Genus/Species Names",
+                    value   = ""),
+                  checkboxInput("comp_evs", label = "Compute Eigenvectors?"),
+                  actionButton(
+                    inputId = "submit_fig_id",
+                    label = "Submit"
+                  )
+                ),
+                plotOutput("pop_TS",
+                           height = "800px")
+              )
+      )
     ) # End Dashboard body tab items
 
   ) # End dashboard body
@@ -126,8 +333,7 @@ ui <- dashboardPage(
 
 server <- function(input, output) {
 
-  output$sum_tab  <- renderTable({
-
+  make_sum_tab <- reactive({
 
     gr_by <- syms(input$gr_by)
 
@@ -135,56 +341,65 @@ server <- function(input, output) {
       group_by(!!! gr_by) %>%
       summarise(id = length(unique(ipm_id)),
                 spp = length(unique(species_accepted)),
-                pubs = length(unique(apa_citation)))
+                pubs = length(unique(apa_citation)),
+                all_ids = paste(ipm_id, collapse = ", "))
 
-    if(length(gr_by) == 0 ){
+    if(length(gr_by) == 0 ) {
       out_tab <- setNames(out_tab,
                           c("# of ipm_id's",
                             "# of Species",
-                            "# of Publications"))
+                            "# of Publications",
+                            "Associated ipm_id's"))
     } else {
       names(out_tab)[(length(gr_by) + 1):(ncol(out_tab))] <- c("# of ipm_id's",
                                                                "# of Species",
-                                                               "# of Publications")
+                                                               "# of Publications",
+                                                               "Associated ipm_id's")
     }
 
     out_tab
+
   })
 
-  use_pdb <- eventReactive(
-    eventExpr = input$submit_ipm_id,
+  make_col_widths <- reactive({
+
+    gr_by <- syms(input$gr_by)
+
+    n_cols <- length(gr_by) + 4
+
+    wids <- c(rep("50px", n_cols), "250px")
+    names(wids) <- rep("sWidth", n_cols)
+
+    list(wids)
+  })
+
+
+  output$sum_tab  <- renderDataTable({
+
+    out_tab <- make_sum_tab()
+
+    out_tab
+  },
+  options = list(
+    pageLength = 10,
+    lengthMenu = seq(10, 50, by = 10),
+    aoColumn = list(make_col_widths())))
+
+
+  map_pdb <- eventReactive(
+    eventExpr = input$submit_map_id,
     valueExpr = {
 
-      ipm_ids <- input$ipm_ids
+      ipm_ids <- pdb_calculate_input_ipm_ids(pdb, input$map_ids)
 
-      if(ipm_ids == "all") {
-        pdb %>%
-          .$Metadata %>%
-          select(ipm_id, species_accepted, doi, lon, lat) %>%
-          mutate(species_accepted = gsub("_", " ", .$species_accepted)) %>%
-          filter(!is.na(lat) & !is.na(lon)) %>%
-          st_as_sf(crs = "WGS84",
-                   coords = 4:5)
-      } else {
+      pdb_make_map_dataset(pdb, ipm_ids)
 
-        ipm_ids <- strsplit(ipm_ids, ", ") %>%
-          unlist() %>%
-          trimws()
-
-        pdb_subset(pdb, ipm_ids) %>%
-          .$Metadata %>%
-          select(ipm_id, species_accepted, doi, lon, lat) %>%
-          mutate(species_acceptcced = gsub("_", " ", .$species_accepted)) %>%
-          filter(!is.na(lat) & !is.na(lon)) %>%
-          st_as_sf(crs = "WGS84",
-                   coords = 4:5)
-      }
     }
   )
 
   output$map_out <- renderLeaflet({
 
-    use_dat <- use_pdb()
+    use_dat <- map_pdb()
 
     labs <- pdb_map_lab_link(use_dat)
 
@@ -194,6 +409,157 @@ server <- function(input, output) {
                  clusterOptions = markerClusterOptions())
 
     out
+  })
+
+
+  mod_pdb <- eventReactive(
+    eventExpr = {
+      input$submit_mod_id
+      input$submit_fig_id
+    },
+    valueExpr = {
+
+      if(input$submit_mod_id) {
+        ids <- input$mod_ids
+
+      } else {
+
+        ids <- input$fig_ids
+      }
+
+      ipm_ids    <- pdb_calculate_input_ipm_ids(pdb, ids) %>%
+        pdb_check_stochastic_models(db = pdb, ids = .)
+
+      proto_list <- pdb_make_proto_ipm(pdb, ipm_ids)
+
+      ipms       <- pdb_make_ipm(proto_list)
+
+      conv_test  <- vapply(
+        ipms,
+        function(x, tol) all(is_conv_to_asymptotic(x, tolerance = tol)),
+        logical(1L),
+        tol = 1e-5)
+
+
+
+    # If we have some that don't converge, try reiterating them
+    if(any(!conv_test)) {
+
+      reiterate_ids <- names(ipms[!conv_test])
+
+      addl_args <- lapply(seq_along(reiterate_ids),
+                          function(x) list(iterations = 200)) %>%
+        setNames(reiterate_ids) %>%
+        list()
+
+      new_ipms <- pdb_make_proto_ipm(pdb, reiterate_ids) %>%
+        pdb_make_ipm()
+
+      for(i in seq_along(new_ipms)) {
+
+        ipms[[reiterate_ids[i]]] <- new_ipms[[i]]
+
+      }
+
+    }
+
+    ipms
+
+  })
+
+
+  output$demog_stats <- renderDataTable({
+
+    mod <- mod_pdb()
+
+    # Ps    <- get_ps(mod)
+    # Fs    <- get_fs(mod)
+    # Ns    <- get_Ns(mod)
+
+    lam   <- lambda(mod)
+    # R_0   <- R_0(Fs, Ns)
+    # gen_T <- gen_T(R_0, lam)
+
+    # if(input$comp_evs){
+    #   r_evs <- right_ev(mod)
+    #   l_ev  <- left_ev(mod)
+    # }
+
+    for(i in seq_along(lam)) {
+
+      lam[[i]] <- data.frame(
+        ipm_id = names(lam)[i],
+        name   = names(lam[[i]]),
+        lambda = round(lam[[i]], 3)
+      )
+
+    }
+
+    do.call(rbind, lam)
+
+  },
+  options = list(
+    pageLength = 10,
+    lengthMenu = seq(10, 50, by = 10)))
+
+  output$pop_TS <- renderPlot({
+
+    mod <- mod_pdb()
+
+    ps  <- pop_state(mod) %>%
+      pdb_prep_ps_par_sets(pdb) %>%
+      lapply(pdb_mat_to_df) #%>%
+
+    ps <- ipmr:::.flatten_to_depth(ps, 1L) #%>%
+    ps <- lapply(ps, ipm_to_df)
+
+    plt_list <- list()
+
+    for(i in seq_along(ps)) {
+
+      pp     <- ps[[i]]
+      n_bins <- max(pp$t_1)
+
+      plt_list[[i]] <- ggplot(pp, aes(x = t, y = t_1)) +
+        geom_tile(aes(fill = value)) +
+        xlab("Time Step (t)") +
+        ylab("Bin (z)") +
+        # Reverse the Y axis
+        scale_y_continuous(breaks = round(seq(0, n_bins, length.out = 4), 0),
+                           labels = round(seq(n_bins, 0, length.out = 4), 0)) +
+        theme_bw() +
+        theme(panel.background = element_blank(),
+              panel.grid       = element_blank(),
+              axis.text        = element_text(size = 16),
+              axis.title       = element_text(size = 18)) +
+        scale_fill_continuous("Population Count or Density") +
+        ggtitle(names(ps)[i])
+
+    }
+
+    dims <- integer(2L)
+    if(length(plt_list) > 4) {
+
+      dims[1:2] <- round(sqrt(length(plt_list)), 0)
+
+      # Sometimes sqrt(length) gets rounded down. In that case, floor + ceiling
+      # the dimensions to make sure (n_row * n_col) > n_plots.
+      # NB: will probably break for large n_plots, but that layout will look
+      # heinous anyway. Maybe want to add a check/warning/error for when
+      # n_plots > 25 or something?
+      if(dims[1]^2 < length(plt_list)) {
+        dims[1] <- ceiling(sqrt(length(plt_list)))
+        dims[2] <- floor(sqrt(length(plt_list)))
+      }
+
+    } else {
+
+      dims <- c(1, length(plt_list))
+
+    }
+
+    grid.arrange(grobs = plt_list, nrow = dims[1], ncol = dims[2])
+
   })
 }
 
