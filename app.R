@@ -7,6 +7,7 @@ library(rlang)
 library(dplyr)
 library(sf)
 library(leaflet)
+library(mapview)
 library(ggplot2)
 library(gridExtra)
 
@@ -217,7 +218,7 @@ pdb_calculate_input_ipm_ids <- function(pdb, input_ids) {
 
 # Re-scales the population state for plotting. This prevents the population
 # time-series heat maps from getting swamped by large numbers in e.g. a seedbank
-# and small transition probalities everywhere else.
+# and small transition probabilities everywhere else.
 
 pdb_check_correct_ps_range <- function(pop_state) {
 
@@ -256,7 +257,11 @@ ui <- dashboardPage(
   dashboardBody(
     tabItems(
       tabItem(tabName = "home",
-              includeHTML("www/home.html")),
+              includeMarkdown("www/home.md"),
+              fluidRow(
+                tableOutput("home_tab")
+              )
+      ),
 
 
       tabItem(tabName = "metadata",
@@ -275,7 +280,6 @@ ui <- dashboardPage(
       tabItem(tabName = "map",
               includeMarkdown("www/map.md"),
               fluidRow(
-                leafletOutput("map_out"),
                 box(
                   title = "Enter ipm_id's or Genus/Species Names to Map",
                   textInput(
@@ -285,8 +289,10 @@ ui <- dashboardPage(
                   actionButton(
                     inputId = "submit_map_id",
                     label = "Submit"
-                  )
-                )
+                  ),
+                  downloadButton("map_dl")
+                ),
+                leafletOutput("map_out", height = 600)
               )
       ), # End Map tab
       tabItem(tabName = "mod_tabs",
@@ -315,7 +321,7 @@ ui <- dashboardPage(
                     inputId = "fig_ids",
                     label   = "IPM ID's/Genus/Species Names",
                     value   = ""),
-                  checkboxInput("comp_evs", label = "Compute Eigenvectors?"),
+                  # checkboxInput("comp_evs", label = "Compute Eigenvectors?"),
                   actionButton(
                     inputId = "submit_fig_id",
                     label = "Submit"
@@ -332,6 +338,32 @@ ui <- dashboardPage(
 
 
 server <- function(input, output) {
+
+  output$home_tab <- renderTable({
+
+    kings <- pdb$Metadata %>%
+      group_by(kingdom) %>%
+      summarise(id = length(unique(ipm_id)),
+                spp = length(unique(species_accepted)),
+                pubs = length(unique(apa_citation)))
+
+    tot <- pdb$Metadata %>%
+      summarise(kingdom = "Totals",
+                id = length(unique(ipm_id)),
+                spp = length(unique(species_accepted)),
+                pubs = length(unique(apa_citation)))
+
+
+    tab <- rbind(kings, tot) %>%
+      setNames(c(
+        "Kingdom", "# of ipm_id's", "# of Species", "# of Publications"
+      ))
+
+    tab
+
+  },
+  striped = TRUE,
+  bordered = TRUE)
 
   make_sum_tab <- reactive({
 
@@ -356,6 +388,7 @@ server <- function(input, output) {
                                                                "# of Publications",
                                                                "Associated ipm_id's")
     }
+
 
     out_tab
 
@@ -397,20 +430,28 @@ server <- function(input, output) {
     }
   )
 
+  map_rv <- reactiveValues(dat = 0)
+
   output$map_out <- renderLeaflet({
 
     use_dat <- map_pdb()
 
     labs <- pdb_map_lab_link(use_dat)
 
-    out <- leaflet(data = use_dat) %>%
+    map_rv$out <- leaflet(data = use_dat) %>%
       addTiles() %>%
       addMarkers(popup = labs,
                  clusterOptions = markerClusterOptions())
 
-    out
+    map_rv$out
   })
 
+  output$map_dl  <- downloadHandler(
+    filename = "my_map.png",
+    content  = function(file) {
+      mapshot(map_rv$out, file = file)
+    }
+  )
 
   mod_pdb <- eventReactive(
     eventExpr = {
@@ -486,8 +527,9 @@ server <- function(input, output) {
     # }
 
     for(i in seq_along(lam)) {
-
+      spp <- pdb$Metadata$species_accepted[pdb$Metadata$ipm_id == names(lam)[i]]
       lam[[i]] <- data.frame(
+        spp_name = gsub("_ ", " ", spp),
         ipm_id = names(lam)[i],
         name   = names(lam[[i]]),
         lambda = round(lam[[i]], 3)
