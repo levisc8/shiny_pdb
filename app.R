@@ -112,14 +112,14 @@ pdb_mat_to_df <- function(ps) {
 
     lapply(ps, function(x){
 
-      x <- lapply(x, pdb_check_correct_ps_range)
+      # x <- lapply(x, pdb_check_correct_ps_range)
 
       do.call(rbind, x)
     })
 
   } else {
 
-    ps <- pdb_check_correct_ps_range(ps)
+    # ps <- pdb_check_correct_ps_range(ps)
 
     list(do.call(rbind, ps))
   }
@@ -130,19 +130,21 @@ pdb_prep_ps_par_sets <- function(pop_state, pdb) {
 
   use_pdb <- pdb_subset(pdb, names(pop_state))
 
-  # No par sets? Then keep on going.
-  if(nrow(use_pdb$ParSetIndices) < 1) return(pop_state)
 
   par_set_tab <- use_pdb$ParSetIndices
 
   par_set_ids <- unique(par_set_tab$ipm_id)
 
-  for(i in seq_along(par_set_ids)) {
+  for(i in seq_along(pop_state)) {
 
-    ind    <- which(names(pop_state) == par_set_ids[i])
+    # No par sets? Then keep on going.
+    if(!names(pop_state)[i] %in% par_set_ids) {
 
-    use_ps          <- pop_state[[ind]]
-    use_par_set_tab <- par_set_tab[par_set_tab$ipm_id == par_set_ids[i], ]
+      next
+    }
+
+    use_ps          <- pop_state[[i]]
+    use_par_set_tab <- par_set_tab[par_set_tab$ipm_id == names(pop_state)[i], ]
 
     use_par_sets    <- as.list(use_par_set_tab$range) %>%
       lapply(function(x) eval(parse(text = x))) %>%
@@ -162,12 +164,12 @@ pdb_prep_ps_par_sets <- function(pop_state, pdb) {
     for(j in seq_along(par_set_inds)) {
 
       temp <- c(temp, list(use_ps[grepl(par_set_inds[j], names(use_ps))]))
-      names(temp)[j] <- paste(par_set_ids[i], par_set_inds[j], sep = "_")
+      names(temp)[j] <- paste(names(pop_state)[i], par_set_inds[j], sep = "_")
 
     }
 
     attr(temp, "has_par_sets") <- TRUE
-    pop_state[[ind]] <- temp
+    pop_state[[i]] <- temp
 
   }
 
@@ -213,6 +215,10 @@ pdb_calculate_input_ipm_ids <- function(pdb, input_ids) {
 
   }
 
+  if(!any(ipm_ids %in% pdb$Metadata$ipm_id)) {
+    stop("The requested 'ipm_id's are not present in this version of PADRINO!")
+  }
+
   return(ipm_ids)
 }
 
@@ -222,15 +228,15 @@ pdb_calculate_input_ipm_ids <- function(pdb, input_ids) {
 
 pdb_check_correct_ps_range <- function(pop_state) {
 
-  rng <- range(pop_state)
+  rng <- range(pop_state$value)
 
   if(abs(diff(rng)) > 0.1) {
-    if(max(pop_state) < 1) {
+    if(max(pop_state$value) < 1) {
       pow <- 4
     } else {
       pow <- 0.1
     }
-    pop_state <- pop_state ^ (pow)
+    pop_state$value <- pop_state$value ^ (pow)
   }
 
   return(pop_state)
@@ -406,7 +412,7 @@ server <- function(input, output) {
     list(wids)
   })
 
-
+  # Summary table for Metadata
   output$sum_tab  <- renderDataTable({
 
     out_tab <- make_sum_tab()
@@ -419,6 +425,7 @@ server <- function(input, output) {
     aoColumn = list(make_col_widths())))
 
 
+  # Create dataset for maps
   map_pdb <- eventReactive(
     eventExpr = input$submit_map_id,
     valueExpr = {
@@ -430,7 +437,14 @@ server <- function(input, output) {
     }
   )
 
-  map_rv <- reactiveValues(dat = 0)
+  # all_rv stores values that get updated by reactive events, but need to be
+  # transferred across scopes (e.g. downloading a map created by renderLeaflet
+  # with downloadHandler).
+
+  all_rv <- reactiveValues(dat = 0)
+
+  # Render the map, but store also store the result so downloadHandler can access
+  # it for exporting.
 
   output$map_out <- renderLeaflet({
 
@@ -438,20 +452,39 @@ server <- function(input, output) {
 
     labs <- pdb_map_lab_link(use_dat)
 
-    map_rv$out <- leaflet(data = use_dat) %>%
+    all_rv$map <- leaflet(data = use_dat) %>%
       addTiles() %>%
       addMarkers(popup = labs,
                  clusterOptions = markerClusterOptions())
 
-    map_rv$out
+    all_rv$map
   })
 
   output$map_dl  <- downloadHandler(
     filename = "my_map.png",
     content  = function(file) {
-      mapshot(map_rv$out, file = file)
+      mapshot(all_rv$map, file = file)
     }
   )
+
+
+  # This tracks which of the Model tabs has been submitted most recently.
+  # Without it, one tab or another will have precedence and ID's won't update
+  # if the subordinate one is submitted after the first one (though it would
+  # work if the subordinate is submitted first and the user doesn't try to update
+  # it afterwards (I don't think)).
+
+  observe({
+    input$submit_mod_id
+    all_rv$submit_mod <- "1"
+  })
+
+  observe({
+    input$submit_fig_id
+    all_rv$submit_mod <- "2"
+  })
+
+  # Generates the requested IPMs based on inputs from user.
 
   mod_pdb <- eventReactive(
     eventExpr = {
@@ -460,13 +493,9 @@ server <- function(input, output) {
     },
     valueExpr = {
 
-      if(input$submit_mod_id) {
-        ids <- input$mod_ids
-
-      } else {
-
-        ids <- input$fig_ids
-      }
+      ids <- switch(all_rv$submit_mod,
+                    "1" = input$mod_ids,
+                    "2" = input$fig_ids)
 
       ipm_ids    <- pdb_calculate_input_ipm_ids(pdb, ids) %>%
         pdb_check_stochastic_models(db = pdb, ids = .)
@@ -480,7 +509,6 @@ server <- function(input, output) {
         function(x, tol) all(is_conv_to_asymptotic(x, tolerance = tol)),
         logical(1L),
         tol = 1e-5)
-
 
 
     # If we have some that don't converge, try reiterating them
@@ -529,7 +557,7 @@ server <- function(input, output) {
     for(i in seq_along(lam)) {
       spp <- pdb$Metadata$species_accepted[pdb$Metadata$ipm_id == names(lam)[i]]
       lam[[i]] <- data.frame(
-        spp_name = gsub("_ ", " ", spp),
+        spp_name = gsub("_", " ", spp),
         ipm_id = names(lam)[i],
         name   = names(lam[[i]]),
         lambda = round(lam[[i]], 3)
@@ -550,10 +578,13 @@ server <- function(input, output) {
 
     ps  <- pop_state(mod) %>%
       pdb_prep_ps_par_sets(pdb) %>%
-      lapply(pdb_mat_to_df) #%>%
+      lapply(pdb_mat_to_df) %>%
+      ipmr:::.flatten_to_depth(1L) %>%
+      lapply(function(x) {
+        temp <- ipm_to_df(x)
+        pdb_check_correct_ps_range(temp)
+      })
 
-    ps <- ipmr:::.flatten_to_depth(ps, 1L) #%>%
-    ps <- lapply(ps, ipm_to_df)
 
     plt_list <- list()
 
@@ -566,9 +597,8 @@ server <- function(input, output) {
         geom_tile(aes(fill = value)) +
         xlab("Time Step (t)") +
         ylab("Bin (z)") +
-        # Reverse the Y axis
         scale_y_continuous(breaks = round(seq(0, n_bins, length.out = 4), 0),
-                           labels = round(seq(n_bins, 0, length.out = 4), 0)) +
+                           labels = round(seq(0, n_bins, length.out = 4), 0)) +
         theme_bw() +
         theme(panel.background = element_blank(),
               panel.grid       = element_blank(),
