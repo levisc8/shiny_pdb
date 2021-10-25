@@ -434,14 +434,15 @@ server <- function(input, output) {
 
       pdb_make_map_dataset(pdb, ipm_ids)
 
-    }
+    },
+    ignoreNULL = FALSE
   )
 
   # all_rv stores values that get updated by reactive events, but need to be
   # transferred across scopes (e.g. downloading a map created by renderLeaflet
   # with downloadHandler).
 
-  all_rv <- reactiveValues(dat = 0)
+  all_rv <- reactiveValues(map_out = NULL)
 
   # Render the map, but store also store the result so downloadHandler can access
   # it for exporting.
