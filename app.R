@@ -10,6 +10,8 @@ library(leaflet)
 library(mapview)
 library(ggplot2)
 library(gridExtra)
+library(knitr)
+library(rmarkdown)
 
 # Download PADRINO upfront so it is not constantly re-downloading itself
 pdb <- pdb_download(save = FALSE)
@@ -222,6 +224,93 @@ pdb_calculate_input_ipm_ids <- function(pdb, input_ids) {
   return(ipm_ids)
 }
 
+pdb_download_report <- function(pdb, ids, dest, output_format) {
+
+  use_db <- pdb_subset(pdb, ids)
+
+  pdb_report(use_db,
+             title = "",
+             keep_rmd = TRUE,
+             rmd_dest = dest,
+             # output_format = output_format,
+             render_output = FALSE,
+             map = TRUE)
+
+  temp_report <- readLines(dest, warn = FALSE)
+  cit_ind     <- which(temp_report == "# Citations included in the `pdb` object")
+
+  ipm_tab <- pdb_make_proto_ipm(use_db) %>%
+    pdb_make_ipm() %>%
+    pdb_make_ipm_report_table(db = use_db)
+
+  pdb_insert_ipm_tab(temp_report, cit_ind, ipm_tab$txt) %>%
+    writeLines(con = dest)
+
+  rmarkdown::render(input         = dest,
+                    output_format = output_format,
+                    envir         = ipm_tab$env)
+
+}
+
+pdb_make_ipm_report_table <- function(ipms, db) {
+
+  lams <- lambda(ipms)
+
+  lam_tab <- list()
+
+  for(i in seq_along(lams)) {
+
+    spp <- db$Metadata$species_accepted[db$Metadata$ipm_id == names(lams)[i]]
+
+    # Will need to add a naming function here to handle different metric
+    # names whenever I do add that functionality (e.g. R_0, T, etc.)
+
+    lam_tab[[i]] <- data.frame(
+      spp_name = gsub("_", " ", spp),
+      ipm_id = names(lams)[i],
+      name   = names(lams[[i]]),
+      lambda = round(lams[[i]], 3)
+    )
+
+  }
+
+  lam_tab <- do.call(rbind, lam_tab)
+
+  # Create evaluation environment for the rendering -
+  # We need to move the output table, and the coordinates for the map
+  # to there so that they can be found when the RMD file is knitted.
+
+  ev_env <- new.env()
+  ev_env$out_tab <- lam_tab
+  ev_env$coords  <- db$Metadata[ , c("lat", "lon")] %>%
+    .[complete.cases(.), ]
+
+
+  # Same as above re: naming. col.names = c(...) should probably get its
+  # own function.
+
+  out_txt <- paste0(
+    "```{r echo = FALSE, message = FALSE, warning = FALSE}\n\n",
+    'col_names <- c("Species Name", "ipm_id", "Lambda Name", "Lambda")\n\n',
+    "knitr::kable(out_tab, col.names = col_names)\n\n",
+    "```"
+  )
+
+  list(env = ev_env,
+       txt = out_txt)
+}
+
+pdb_insert_ipm_tab <- function(report, starting_index, ipm_table) {
+
+  cit_ind  <- seq(starting_index, length(report), 1)
+  cit_list <- report[cit_ind]
+  temp_rep <- report[-cit_ind]
+
+  c(temp_rep, ipm_table, cit_list)
+
+}
+
+
 # Re-scales the population state for plotting. This prevents the population
 # time-series heat maps from getting swamped by large numbers in e.g. a seedbank
 # and small transition probabilities everywhere else.
@@ -256,7 +345,8 @@ ui <- dashboardPage(
       menuItem("Maps",           tabName = "map",       icon = icon("map")),
       menuItem("Models",                                icon = icon("calculator"),
                menuSubItem("Tables",        tabName = "mod_tabs"),
-               menuSubItem("Model Figures", tabName = "mod_figs"))
+               menuSubItem("Model Figures", tabName = "mod_figs"),
+               menuSubItem("Reports",       tabName = "mod_reps"))
 
   ),
 
@@ -279,7 +369,7 @@ ui <- dashboardPage(
                                    choices = names(pdb[[1]]),
                                    multiple = TRUE)
 
-                ),
+                 ),
                 dataTableOutput("sum_tab")
               )
       ), # End Metadata tab
@@ -335,6 +425,33 @@ ui <- dashboardPage(
                 ),
                 plotOutput("pop_TS",
                            height = "800px")
+              )
+      ),
+      tabItem(tabName = "mod_reps",
+              includeMarkdown("www/mods.md"),
+              fluidRow(
+                column(8,
+                       box(
+                         title = "Enter ipm_id's or Genus/Species Names to Generate Report",
+                         textInput(
+                           inputId = "rep_ids",
+                           label   = "IPM ID's/Genus/Species Names",
+                           value   = ""),
+                         radioButtons(
+                           inputId = "rep_out_style",
+                           label   = "Select Output Document Type",
+                           choices = list(HTML = "html", PDF = "pdf")
+                         ),
+                         actionButton(
+                           inputId = "submit_rep_id",
+                           label = "Submit"
+                         )
+                       )
+                ),
+                column(4,
+                       downloadButton("rep_dl")
+                ),
+                textOutput("rep_msg")
               )
       )
     ) # End Dashboard body tab items
@@ -485,6 +602,11 @@ server <- function(input, output) {
     all_rv$submit_mod <- "2"
   })
 
+  observe({
+    input$submit_rep_id
+    all_rv$submit_mod <- "3"
+  })
+
   # Generates the requested IPMs based on inputs from user.
 
   mod_pdb <- eventReactive(
@@ -494,9 +616,10 @@ server <- function(input, output) {
     },
     valueExpr = {
 
-      ids <- switch(all_rv$submit_mod,
-                    "1" = input$mod_ids,
-                    "2" = input$fig_ids)
+      ids        <- switch(all_rv$submit_mod,
+                           "1" = input$mod_ids,
+                           "2" = input$fig_ids,
+                           "3" = input$rep_ids)
 
       ipm_ids    <- pdb_calculate_input_ipm_ids(pdb, ids) %>%
         pdb_check_stochastic_models(db = pdb, ids = .)
@@ -634,6 +757,31 @@ server <- function(input, output) {
     grid.arrange(grobs = plt_list, nrow = dims[1], ncol = dims[2])
 
   })
+
+  output$rep_msg <- eventReactive(
+    eventExpr = input$submit_rep_id,
+    valueExpr = {
+
+      "\n\nYour report is ready for download - please click the download button."
+  })
+
+  output$rep_dl  <- downloadHandler(
+    filename = paste0("my_report,", input$rep_out_style),
+    content  = function(file = paste0("temp.", input$rep_out_style)) {
+
+      ids       <- pdb_calculate_input_ipm_ids(pdb, input$rep_ids)
+      use_db    <- pdb_subset(pdb, ids)
+      out_style <- paste0(input$rep_out_style, "_document")
+
+
+      pdb_download_report(use_db,
+                          ids,
+                          dest = tempfile(fileext = ".rmd"),
+                          output_format = out_style)
+
+    }
+  )
+
 }
 
 
