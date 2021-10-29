@@ -1,3 +1,9 @@
+on:
+  push:
+    branches:
+      - main
+
+
 jobs:
   deploy-to-connect:
     runs-on: macOS-latest
@@ -34,5 +40,6 @@ jobs:
           rsconnect::setAccountInfo(name   = 'sam-levin',
                                     token  = ${{secrets.SHINYAPPS_TOKEN}},
                                     secret = ${{secrets.SHINYAPPS_SECRET}})
-          rsconnect::deployApp(appName = 'shiny_pdb')
+          rsconnect::deployApp(appName = 'shiny_pdb',
+                               appManifest = "manifest.json")
         shell: Rscript {0}
