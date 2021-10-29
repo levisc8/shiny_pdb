@@ -1,0 +1,38 @@
+jobs:
+  deploy-to-connect:
+    runs-on: macOS-latest
+    env:
+      APP_NAME: "shiny_pdb"
+      SHINYAPPS_TOKEN: ${{ secrets.SHINYAPPS_TOKEN }}
+      SHINYAPPS_SECRET: ${{ secrets.SHINYAPPS_SECRET }}
+    steps:
+      - uses: actions/checkout@v2
+
+      - uses: r-lib/actions/setup-r@master
+
+      - name: Install renv
+        run: |
+          install.packages("renv")
+        shell: Rscript {0}
+
+      - name: Restore environment
+        run: |
+          renv::consent(TRUE)
+          renv::restore()
+        shell: Rscript {0}
+
+      - name: Generate manifest.json
+        run: |
+          rsconnect::writeManifest(appDir = ".",
+                                   appFiles = c(
+                                     "app.R", "www/home.md", "www/maps.md", "www/mods.md"
+                                   ))
+        shell: Rscript {0}
+
+      - name: Deploy to RStudio Connect
+        run: |
+          rsconnect::setAccountInfo(name   = 'sam-levin',
+                                    token  = ${{secrets.SHINYAPPS_TOKEN}},
+                                    secret = ${{secrets.SHINYAPPS_SECRET}})
+          rsconnect::deployApp(appName = 'shiny_pdb')
+        shell: Rscript {0}
