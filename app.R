@@ -224,19 +224,21 @@ pdb_calculate_input_ipm_ids <- function(pdb, input_ids) {
   return(ipm_ids)
 }
 
-pdb_download_report <- function(pdb, ids, dest, output_format) {
+pdb_download_report <- function(pdb, ids, dest) {
 
-  use_db <- pdb_subset(pdb, ids)
+  use_db   <- pdb_subset(pdb, ids)
+
+  rmd_path <- gsub("pdf", "rmd", dest)
 
   pdb_report(use_db,
              title = "",
              keep_rmd = TRUE,
-             rmd_dest = dest,
-             # output_format = output_format,
+             rmd_dest = rmd_path,
+             output_format = "pdf",
              render_output = FALSE,
              map = TRUE)
 
-  temp_report <- readLines(dest, warn = FALSE)
+  temp_report <- readLines(rmd_path, warn = FALSE)
   cit_ind     <- which(temp_report == "# Citations included in the `pdb` object")
 
   ipm_tab <- pdb_make_proto_ipm(use_db) %>%
@@ -244,13 +246,29 @@ pdb_download_report <- function(pdb, ids, dest, output_format) {
     pdb_make_ipm_report_table(db = use_db)
 
   pdb_insert_ipm_tab(temp_report, cit_ind, ipm_tab$txt) %>%
-    writeLines(con = dest)
+    pdb_clean_report_source() %>%
+    writeLines(con = rmd_path)
 
-  rmarkdown::render(input         = dest,
-                    output_format = output_format,
+  # output_format <- paste0(output_format, "_document")
+
+  rmarkdown::render(input         = rmd_path,
+                    output_format = "pdf_document",
                     envir         = ipm_tab$env)
 
 }
+
+# Cleans the indentation issues that might arise from pdb_report
+
+pdb_clean_report_source <- function(report) {
+
+  chunk_ind <- grepl("```", report)
+
+  report[chunk_ind] <- trimws(report[chunk_ind])
+
+  report
+
+}
+
 
 pdb_make_ipm_report_table <- function(ipms, db) {
 
@@ -276,9 +294,9 @@ pdb_make_ipm_report_table <- function(ipms, db) {
 
   lam_tab <- do.call(rbind, lam_tab)
 
-  # Create evaluation environment for the rendering -
-  # We need to move the output table, and the coordinates for the map
-  # to there so that they can be found when the RMD file is knitted.
+  # Create evaluation environment for the rendering - We need to move the output
+  # table, and the coordinates for the map to there so that they can be found
+  # when the RMD file is knitted.
 
   ev_env <- new.env()
   ev_env$out_tab <- lam_tab
@@ -290,9 +308,12 @@ pdb_make_ipm_report_table <- function(ipms, db) {
   # own function.
 
   out_txt <- paste0(
+    "\n\n# Demographic statistics for ",
+    "`r paste(unique(out_tab$spp_name), collapse = ', ')`",
+    "\n\n",
     "```{r echo = FALSE, message = FALSE, warning = FALSE}\n\n",
     'col_names <- c("Species Name", "ipm_id", "Lambda Name", "Lambda")\n\n',
-    "knitr::kable(out_tab, col.names = col_names)\n\n",
+    "kable(out_tab, col.names = col_names, row.names = FALSE)\n\n",
     "```"
   )
 
@@ -437,11 +458,6 @@ ui <- dashboardPage(
                            inputId = "rep_ids",
                            label   = "IPM ID's/Genus/Species Names",
                            value   = ""),
-                         radioButtons(
-                           inputId = "rep_out_style",
-                           label   = "Select Output Document Type",
-                           choices = list(HTML = "html", PDF = "pdf")
-                         ),
                          actionButton(
                            inputId = "submit_rep_id",
                            label = "Submit"
@@ -459,6 +475,7 @@ ui <- dashboardPage(
   ) # End dashboard body
 )
 
+# Server ------
 
 server <- function(input, output) {
 
@@ -762,22 +779,21 @@ server <- function(input, output) {
     eventExpr = input$submit_rep_id,
     valueExpr = {
 
-      "\n\nYour report is ready for download - please click the download button."
+      "\n\nClick the Download button to prepare your report."
   })
 
   output$rep_dl  <- downloadHandler(
-    filename = paste0("my_report,", input$rep_out_style),
-    content  = function(file = paste0("temp.", input$rep_out_style)) {
+    filename = "report.pdf",
+    content  = function(file) {
 
       ids       <- pdb_calculate_input_ipm_ids(pdb, input$rep_ids)
       use_db    <- pdb_subset(pdb, ids)
-      out_style <- paste0(input$rep_out_style, "_document")
 
-
-      pdb_download_report(use_db,
-                          ids,
-                          dest = tempfile(fileext = ".rmd"),
-                          output_format = out_style)
+      pdb_download_report(
+        use_db,
+        ids,
+        dest = file
+      )
 
     }
   )
