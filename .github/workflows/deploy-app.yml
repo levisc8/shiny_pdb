@@ -34,9 +34,9 @@ jobs:
                                     token  = ${{secrets.SHINYAPPS_TOKEN}},
                                     secret = ${{secrets.SHINYAPPS_SECRET}})
           rsconnect::deployApp(appName = 'shiny_pdb',
-                               appFileManifest = c('app.R',
-                                                   'www/map.md',
-                                                   'www/home.md',
-                                                   'www/mods.md'),
+                               appFiles = c('app.R',
+                                            'www/map.md',
+                                            'www/home.md',
+                                            'www/mods.md'),
                                logLevel = 'verbose')
         shell: Rscript {0}
