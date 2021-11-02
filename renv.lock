@@ -60,8 +60,8 @@
       "RemoteRepo": "RPadrino",
       "RemoteUsername": "padrinoDB",
       "RemoteRef": "HEAD",
-      "RemoteSha": "6e33228408619022a8934021d37f7cb3f0a1729f",
-      "Hash": "5b6a627ee768bca4e6cd9902a056c477"
+      "RemoteSha": "17aa15b1a8f1e379fca7d03877a4cec8101491dd",
+      "Hash": "ea229d856046ce67de802b30281e7dc8"
     },
     "Rcpp": {
       "Package": "Rcpp",

@@ -224,19 +224,19 @@ pdb_calculate_input_ipm_ids <- function(pdb, input_ids) {
   return(ipm_ids)
 }
 
-pdb_download_report <- function(pdb, ids, dest) {
+pdb_download_report <- function(pdb, ids, dummy_dest, dest) {
 
   use_db   <- pdb_subset(pdb, ids)
 
   rmd_path <- gsub("pdf", "rmd", dest)
 
-  pdb_report(use_db,
-             title = "",
-             keep_rmd = TRUE,
-             rmd_dest = rmd_path,
-             output_format = "pdf",
-             render_output = FALSE,
-             map = TRUE)
+  rmd_path <- pdb_report(use_db,
+                         title = "",
+                         keep_rmd = TRUE,
+                         rmd_dest = dummy_dest,
+                         output_format = "pdf",
+                         render_output = FALSE,
+                         map = TRUE)
 
   temp_report <- readLines(rmd_path, warn = FALSE)
   cit_ind     <- which(temp_report == "# Citations included in the `pdb` object")
@@ -253,6 +253,7 @@ pdb_download_report <- function(pdb, ids, dest) {
 
   rmarkdown::render(input         = rmd_path,
                     output_format = "pdf_document",
+                    output_file   = dest,
                     envir         = ipm_tab$env)
 
 }
@@ -789,9 +790,11 @@ server <- function(input, output) {
       ids       <- pdb_calculate_input_ipm_ids(pdb, input$rep_ids)
       use_db    <- pdb_subset(pdb, ids)
 
+
       pdb_download_report(
         use_db,
         ids,
+        dummy_dest = tempdir(),
         dest = file
       )
 
