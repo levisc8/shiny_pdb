@@ -58,10 +58,10 @@
       "RemoteType": "github",
       "RemoteHost": "api.github.com",
       "RemoteRepo": "RPadrino",
-      "RemoteUsername": "levisc8",
+      "RemoteUsername": "padrinoDB",
       "RemoteRef": "HEAD",
-      "RemoteSha": "ba302f14024342d9e7ab511377a03df3543f4e91",
-      "Hash": "950a3697b49f8e4328c801ea7aa7625a"
+      "RemoteSha": "6e33228408619022a8934021d37f7cb3f0a1729f",
+      "Hash": "5b6a627ee768bca4e6cd9902a056c477"
     },
     "Rcpp": {
       "Package": "Rcpp",
@@ -334,12 +334,12 @@
       "Version": "0.0.4.9000",
       "Source": "GitHub",
       "RemoteType": "github",
-      "RemoteHost": "api.github.com",
-      "RemoteRepo": "ipmr",
       "RemoteUsername": "levisc8",
+      "RemoteRepo": "ipmr",
       "RemoteRef": "HEAD",
-      "RemoteSha": "bdc432309954a6fd731a232e019091190c011bee",
-      "Hash": "4e7b62add7feba5a1b4db114b9df75f2"
+      "RemoteSha": "ea1ed92515c9ad66002e3cbf6b24572b6ec8f3c9",
+      "RemoteHost": "api.github.com",
+      "Hash": "fe83cb70bfe9b088562a29642751cc3d"
     },
     "isoband": {
       "Package": "isoband",

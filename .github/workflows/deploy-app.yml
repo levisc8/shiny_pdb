@@ -27,13 +27,6 @@ jobs:
           renv::restore()
         shell: Rscript {0}
 
-      - name: Generate manifest.json
-        run: |
-          rsconnect::writeManifest(appDir = ".",
-                                   appFiles = c(
-                                     "app.R", "www/home.md", "www/maps.md", "www/mods.md"
-                                   ))
-        shell: Rscript {0}
 
       - name: Deploy to RStudio Connect
         run: |
@@ -41,5 +34,9 @@ jobs:
                                     token  = ${{secrets.SHINYAPPS_TOKEN}},
                                     secret = ${{secrets.SHINYAPPS_SECRET}})
           rsconnect::deployApp(appName = 'shiny_pdb',
-                               appFileManifest = "manifest.json")
+                               appFileManifest = c('app.R',
+                                                   'www/map.md',
+                                                   'www/home.md',
+                                                   'www/mods.md'),
+                               logLevel = 'verbose')
         shell: Rscript {0}
