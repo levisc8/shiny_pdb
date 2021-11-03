@@ -16,8 +16,9 @@ library(rmarkdown)
 # Download PADRINO upfront so it is not constantly re-downloading itself
 pdb <- pdb_download(save = FALSE)
 
+# Non-reactive functions -----------------
 
-# Helper functions -----------------
+# Converts Metadata$doi into clickable links to source documents
 
 pdb_jstor_doi_link <- function(pdb) {
 
@@ -52,6 +53,9 @@ pdb_jstor_doi_link <- function(pdb) {
 
 }
 
+# Converts Metadata$doi into clickable links to source documents w/ species name
+# labels
+
 pdb_map_lab_link <- function(pdb) {
 
   links <- pdb_jstor_doi_link(pdb)
@@ -78,6 +82,9 @@ pdb_map_lab_link <- function(pdb) {
 
 }
 
+# Creates an sf object w/ species names and source document info for mapping
+# w/ leaflet
+
 pdb_make_map_dataset <- function(pdb, ipm_ids) {
 
   pdb_subset(pdb, ipm_ids) %>%
@@ -88,6 +95,10 @@ pdb_make_map_dataset <- function(pdb, ipm_ids) {
     st_as_sf(crs = "WGS84",
              coords = 4:5)
 }
+
+# Stochastic models aren't yet supported by the app, so this checks for and
+# removes them from user-requested datasets. Only removes them mod_pdb()
+# (reactive function which creates pdb objects for "Models" tab)
 
 pdb_check_stochastic_models <- function(db, ids) {
 
@@ -108,30 +119,31 @@ pdb_check_stochastic_models <- function(db, ids) {
 
 }
 
-pdb_mat_to_df <- function(ps) {
+# Creates single array for a list of population states. Designed to operate
+# on a single model.
+
+pdb_ps_rbind <- function(ps) {
 
   if(isTRUE(attr(ps, "has_par_sets"))) {
 
     lapply(ps, function(x){
-
-      # x <- lapply(x, pdb_check_correct_ps_range)
 
       do.call(rbind, x)
     })
 
   } else {
 
-    # ps <- pdb_check_correct_ps_range(ps)
-
     list(do.call(rbind, ps))
   }
 
 }
 
+# Renames the population state list so that display labels are
+# more useful when plotting in the models tab.
+
 pdb_prep_ps_par_sets <- function(pop_state, pdb) {
 
   use_pdb <- pdb_subset(pdb, names(pop_state))
-
 
   par_set_tab <- use_pdb$ParSetIndices
 
@@ -141,7 +153,6 @@ pdb_prep_ps_par_sets <- function(pop_state, pdb) {
 
     # No par sets? Then keep on going.
     if(!names(pop_state)[i] %in% par_set_ids) {
-
       next
     }
 
@@ -155,10 +166,6 @@ pdb_prep_ps_par_sets <- function(pop_state, pdb) {
     if(!all(is.na(use_par_set_tab$drop_levels))) {
       use_par_sets$drop_levels <- unique(eval(use_par_set_tab$drop_levels))
     }
-
-    # replace the "n_z_parSetIndex" with "ipm_id_z_parSetIndex"
-
-    # names(use_ps)  <- gsub("^n", names(pop_state[ind]), names(use_ps))
 
     par_set_inds <- ipmr:::.make_par_set_indices(use_par_sets)
 
@@ -179,13 +186,15 @@ pdb_prep_ps_par_sets <- function(pop_state, pdb) {
 
 }
 
+# Takes either a vector of ipm_ids or a vector of genus/species names and
+# computes the correct set of unique ipm_ids. This is used to subset pdb objects
+# in pretty much every tab of the app
+
 pdb_calculate_input_ipm_ids <- function(pdb, input_ids) {
 
   ipm_ids <- strsplit(input_ids, ",") %>%
     unlist() %>%
     trimws()
-
-  # browser()
 
   if(input_ids == "all") {
 
@@ -224,6 +233,8 @@ pdb_calculate_input_ipm_ids <- function(pdb, input_ids) {
   return(ipm_ids)
 }
 
+# Creates the actual report
+
 pdb_download_report <- function(pdb, ids, dummy_dest, dest) {
 
   use_db   <- pdb_subset(pdb, ids)
@@ -258,7 +269,8 @@ pdb_download_report <- function(pdb, ids, dummy_dest, dest) {
 
 }
 
-# Cleans the indentation issues that might arise from pdb_report
+# Cleans the indentation issues that might arise from code chunk creation
+# in pdb_report
 
 pdb_clean_report_source <- function(report) {
 
@@ -270,6 +282,9 @@ pdb_clean_report_source <- function(report) {
 
 }
 
+# Creates an RMD code chunk that, when evaluated, creates a table with
+# demographic statistics for the downloadable report. Edit this to add more
+# demographic statistics.
 
 pdb_make_ipm_report_table <- function(ipms, db) {
 
@@ -321,6 +336,10 @@ pdb_make_ipm_report_table <- function(ipms, db) {
   list(env = ev_env,
        txt = out_txt)
 }
+
+# Inserts the code chunk into an as-yet-unknitted RMD document. Assumes it is
+# working with output from pdb_report, so any changes to that function must
+# propagate here!
 
 pdb_insert_ipm_tab <- function(report, starting_index, ipm_table) {
 
@@ -720,7 +739,7 @@ server <- function(input, output) {
 
     ps  <- pop_state(mod) %>%
       pdb_prep_ps_par_sets(pdb) %>%
-      lapply(pdb_mat_to_df) %>%
+      lapply(pdb_ps_rbind) %>%
       ipmr:::.flatten_to_depth(1L) %>%
       lapply(function(x) {
         temp <- ipm_to_df(x)
@@ -802,7 +821,5 @@ server <- function(input, output) {
   )
 
 }
-
-
 
 shinyApp(ui = ui, server = server)
