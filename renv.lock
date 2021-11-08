@@ -51,13 +51,13 @@
       "Repository": "CRAN",
       "Hash": "e031418365a7f7a766181ab5a41a5716"
     },
-    "RPadrino": {
-      "Package": "RPadrino",
+    "Rpadrino": {
+      "Package": "Rpadrino",
       "Version": "0.0.0.9000",
       "Source": "GitHub",
       "RemoteType": "github",
       "RemoteHost": "api.github.com",
-      "RemoteRepo": "RPadrino",
+      "RemoteRepo": "Rpadrino",
       "RemoteUsername": "padrinoDB",
       "RemoteRef": "HEAD",
       "RemoteSha": "17aa15b1a8f1e379fca7d03877a4cec8101491dd",

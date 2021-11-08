@@ -1,7 +1,7 @@
 # shiny app to explore PADRINO interactively
 
 # Dependencies ---------------
-library(RPadrino)
+library(Rpadrino)
 library(shinydashboard)
 library(rlang)
 library(dplyr)
